@@ -1,0 +1,125 @@
+name: Build fuxi GKI kernel (SukiSU Nova / SUSFS / KPM)
+
+# 用法：把 build-kit 目录推送到一个 GitHub 仓库，然后到 Actions 页手动 Run workflow。
+# 产物：boot-fuxi-*.img（可直接 fastboot flash boot 到当前槽）、Image、Image.kpm、日志。
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_susfs:
+        description: "1 = builtin 分支 + susfs4ksu 内置 SUSFS（实验性）；0 = main 分支（稳定，SUSFS 之后用 LKM）"
+        required: true
+        default: "0"
+        type: choice
+        options: ["0", "1"]
+      inject_kpm:
+        description: "1 = 构建期用 KernelPatch 0.14.0 把 KPM 宿主注入 Image（推荐）"
+        required: true
+        default: "1"
+        type: choice
+        options: ["0", "1"]
+      ksu_version:
+        description: "KSU 版本号，必须与所用管理器 APK versionCode 一致（Nova v3.0.0=35000，旧 Ultra=41150）"
+        required: true
+        default: "35000"
+      ksu_pkg:
+        description: "管理器包名（Nova=com.sukisu.nova，旧 Ultra=com.sukisu.ultra）"
+        required: true
+        default: "com.sukisu.nova"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout build-kit
+        uses: actions/checkout@v4
+
+      - name: 清理磁盘（AOSP 源码 + clang + 构建产物需要 ~30GB）
+        run: |
+          set -x
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache /usr/local/share/boost /opt/az \
+                      /usr/local/.ghcup /usr/lib/jvm 2>/dev/null || true
+          sudo apt-get clean
+          df -h /
+
+      - name: 增加 swap（LTO 链接吃内存；8GB）
+        run: |
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: 安装依赖（repo / python3 / 构建工具链）
+        run: |
+          bash scripts/install-deps.sh
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          df -h /
+          nproc; free -h
+
+      - name: 构建内核
+        env:
+          KSU_VERSION: ${{ inputs.ksu_version }}
+          KSU_PKG: ${{ inputs.ksu_pkg }}
+          WITH_SUSFS: ${{ inputs.with_susfs }}
+          INJECT_KPM: ${{ inputs.inject_kpm }}
+        run: |
+          set -o pipefail
+          bash scripts/build.sh 2>&1 | tee build-run.log
+
+      - name: 显示产物
+        if: always()
+        run: |
+          echo "===== out ====="
+          ls -lh out || true
+          echo "===== BUILD_INFO ====="
+          cat out/BUILD_INFO.txt || true
+          echo "===== SHA256SUMS ====="
+          cat out/SHA256SUMS || true
+
+      - name: 上传产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuxi-gki-kernel-${{ inputs.with_susfs == '1' && 'susfs' || 'main' }}-kpm${{ inputs.inject_kpm }}
+          path: |
+            out/boot-fuxi-*.img
+            out/Image
+            out/Image.kpm
+            out/kpimg
+            out/kptools-linux
+            out/bootimg_info.txt
+            out/BUILD_INFO.txt
+            out/SHA256SUMS
+            out/build.log
+            out/.config
+            out/System.map
+            out/Module.symvers
+            build-run.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 写入 Job Summary（记下关键参数与产物校验和）
+        if: always()
+        run: |
+          {
+            echo "## fuxi GKI 构建结果"
+            echo ""
+            echo "- 内核基线：android13-5.15-2024-11 / 5.15.167 / bf0a81a7f319"
+            echo "- SukiSU 分支：${{ inputs.with_susfs == '1' && 'builtin (内含 SUSFS 补丁)' || 'main (kprobe)' }}"
+            echo "- KPM 注入：${{ inputs.inject_kpm }}"
+            echo "- KSU_VERSION：${{ inputs.ksu_version }} / 包名：${{ inputs.ksu_pkg }}"
+            echo ""
+            echo "### 产物"
+            echo '```'
+            cat out/BUILD_INFO.txt 2>/dev/null || echo "(无 BUILD_INFO)"
+            echo ""
+            cat out/SHA256SUMS 2>/dev/null || echo "(无校验和)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
