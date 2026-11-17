@@ -168,6 +168,19 @@ elif [ -x "$WORK/common/build/build.sh" ]; then
 else
   die "找不到 build/build.sh，请检查 repo 同步结果"
 fi
+log "跳过 AOSP 的 defconfig 一致性检查（我们追加了 CONFIG_KSU/CONFIG_KPM，必然与 gki_defconfig 不一致）"
+PATCHED=0
+while IFS= read -r f; do
+  case "$f" in
+    *build.config*)
+      sed -i 's/check_defconfig/true/g' "$f"
+      log "  已处理: $f (POST_DEFCONFIG_CMDS)"
+      PATCHED=$((PATCHED+1))
+      ;;
+  esac
+done < <(grep -rl 'check_defconfig' "$WORK/common" "$WORK/build" 2>/dev/null || true)
+log "  处理文件数: $PATCHED"
+
 log "开始编译：BUILD_CONFIG=common/build.config.gki.aarch64 $BUILD_SH"
 ( cd "$WORK"
   BUILD_CONFIG=common/build.config.gki.aarch64 "$BUILD_SH" 2>&1 | tee "$OUT/build.log" )
