@@ -48,13 +48,16 @@ jobs:
           sudo apt-get clean
           df -h /
 
-      - name: 增加 swap（LTO 链接吃内存；8GB）
+      - name: 增加 swap（LTO 链接吃内存；8GB，独立文件名避免与 runner 自带 /swapfile 冲突）
         run: |
-          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          set -x
+          sudo rm -f /dsh-swapfile 2>/dev/null || true
+          sudo fallocate -l 8G /dsh-swapfile || sudo dd if=/dev/zero of=/dsh-swapfile bs=1M count=8192
+          sudo chmod 600 /dsh-swapfile
+          sudo mkswap /dsh-swapfile
+          sudo swapon /dsh-swapfile || true
           free -h
+          df -h /
 
       - name: 安装依赖（repo / python3 / 构建工具链）
         run: |
