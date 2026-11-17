@@ -122,6 +122,20 @@ git clone --depth 1 --branch "$KSU_BRANCH" "$KSU_REPO" "$WORK/ksu-src"
 log "把 kernel/ 复制进 drivers/kernelsu 并挂接 Kbuild/Kconfig"
 rm -rf "$KERNEL_DIR/drivers/kernelsu"
 cp -a "$WORK/ksu-src/kernel" "$KERNEL_DIR/drivers/kernelsu"
+
+# 上游 kernel/include/uapi 是指向仓库根 uapi/ 的相对符号链接（../../uapi）。
+# 把 kernel/ 复制到内核树后该链接指向 <kernel>/drivers/uapi（不存在），
+# 于是 policy/allowlist.h 的 #include "uapi/app_profile.h" 找不到头文件。
+# 这里把真实 uapi 目录替换到 kernelsu/include/uapi，保持 -I.../kernelsu/include 可用。
+log "修复 kernelsu 的 uapi 头文件目录（上游为跨目录相对符号链接）"
+rm -rf "$KERNEL_DIR/drivers/kernelsu/include/uapi"
+mkdir -p "$KERNEL_DIR/drivers/kernelsu/include"
+cp -a "$WORK/ksu-src/uapi" "$KERNEL_DIR/drivers/kernelsu/include/uapi"
+for h in app_profile.h ksu.h supercall.h; do
+  [ -f "$KERNEL_DIR/drivers/kernelsu/include/uapi/$h" ] ||
+    die "uapi 目录复制失败：缺少 include/uapi/$h"
+done
+log "  uapi 头文件数：$(ls -1 "$KERNEL_DIR/drivers/kernelsu/include/uapi" | wc -l)"
 grep -q 'kernelsu' "$KERNEL_DIR/drivers/Makefile" ||
   printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> "$KERNEL_DIR/drivers/Makefile"
 grep -q 'drivers/kernelsu/Kconfig' "$KERNEL_DIR/drivers/Kconfig" ||
