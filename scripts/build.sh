@@ -22,7 +22,7 @@
 # =============================================================================
 set -euo pipefail
 
-log() { printf '\n\033[1;32m===== %s =====\033[0m\n' "$*"; }
+log() { printf '\n\033[1;32m===== [%s] %s =====\033[0m\n' "$(date +%H:%M:%S)" "$*"; }
 die() { printf '\n\033[1;31m[FATAL] %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ---- 输入参数 ----------------------------------------------------------------
@@ -216,8 +216,8 @@ done
 BOOT_KERNEL="$OUT/Image"
 if [ "$INJECT_KPM" = "1" ]; then
   log "KPM：下载 kptools-linux / kpimg（KernelPatch $KP_VER）"
-  curl -fL --retry 3 -o "$OUT/kptools-linux" "$KP_BASE/kptools-linux"
-  curl -fL --retry 3 -o "$OUT/kpimg"        "$KP_BASE/kpimg"
+  curl -fL --retry 3 --connect-timeout 20 --max-time 300 -o "$OUT/kptools-linux" "$KP_BASE/kptools-linux"
+  curl -fL --retry 3 --connect-timeout 20 --max-time 300 -o "$OUT/kpimg"        "$KP_BASE/kpimg"
   chmod +x "$OUT/kptools-linux"
   log "KPM：注入 KernelPatch 宿主"
   "$OUT/kptools-linux" -p -s 123 -i "$OUT/Image" -k "$OUT/kpimg" -o "$OUT/Image.kpm" ||
@@ -231,23 +231,31 @@ fi
 
 # ---- 7. 打包 boot.img（fuxi: header v4 / 4096 / 无 ramdisk / 无 cmdline） ------
 log "打包 boot.img"
-if [ ! -d "$WORK/mkbootimg-src/.git" ]; then
-  git clone --depth 1 https://android.googlesource.com/platform/system/tools/mkbootimg "$WORK/mkbootimg-src"
-fi
 BOOT_IMG="$OUT/boot-fuxi-$(date +%Y%m%d-%H%M).img"
-python3 "$WORK/mkbootimg-src/mkbootimg.py" \
-  --header_version 4 \
-  --kernel "$BOOT_KERNEL" \
-  --output "$BOOT_IMG"
+python3 "$BASE_DIR/scripts/pack_bootimg.py" --kernel "$BOOT_KERNEL" --output "$BOOT_IMG"
 [ -s "$BOOT_IMG" ] || die "boot.img 打包失败"
 log "boot.img：$BOOT_IMG ($(stat -c%s "$BOOT_IMG") bytes)"
 
-# 自检 boot header
-python3 "$WORK/mkbootimg-src/unpack_bootimg.py" --boot_img "$BOOT_IMG" --out "$OUT/unpacked-check" >/dev/null 2>&1 || true
-if [ -f "$OUT/unpacked-check/bootimg_info.txt" ]; then
-  cp -f "$OUT/unpacked-check/bootimg_info.txt" "$OUT/bootimg_info.txt"
-  log "boot header 自检："; sed -n '1,20p' "$OUT/bootimg_info.txt" || true
-fi
+# 自检 boot header（不需要外部脚本，直接读 v4 header）
+log "boot header 自检"
+python3 - "$BOOT_IMG" <<'PY'
+import struct, sys
+p = sys.argv[1]
+with open(p, 'rb') as f:
+    b = f.read(4096)
+magic = b[:8].decode()
+kernel, ramdisk = struct.unpack_from('<II', b, 8)
+hsize, = struct.unpack_from('<I', b, 20)
+hver, = struct.unpack_from('<I', b, 40)
+sig, = struct.unpack_from('<I', b, 1580)
+info = ("magic=%s header_version=%d header_size=%d kernel_size=%d "
+        "ramdisk_size=%d signature_size=%d image_size=%d"
+        % (magic, hver, hsize, kernel, ramdisk, sig, __import__('os').path.getsize(p)))
+print(info)
+with open(p.rsplit('/', 1)[0] + '/bootimg_info.txt', 'w') as o:
+    o.write(info + "\n")
+assert magic == 'ANDROID!' and hver == 4 and ramdisk == 0 and kernel > 0
+PY
 
 # ---- 8. 构建信息与校验和 ------------------------------------------------------
 {

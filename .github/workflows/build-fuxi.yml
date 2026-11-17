@@ -74,7 +74,9 @@ jobs:
           INJECT_KPM: ${{ inputs.inject_kpm }}
         run: |
           set -o pipefail
-          bash scripts/build.sh 2>&1 | tee build-run.log
+          echo "[$(date +%T)] build step start"
+          timeout --signal=INT 3300 bash scripts/build.sh 2>&1 | tee build-run.log
+          echo "[$(date +%T)] build step end rc=$?"
 
       - name: 显示产物
         if: always()
