@@ -1,0 +1,21 @@
+name: Fetch Nova manager APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fetch:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Download APK and verify sha256
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 -o SukiSU_Nova.apk "https://github.com/SukiSU-Nova/SukiSU-Nova/releases/download/v3.0.0/SukiSU_Nova_v3.0.0_35000-arm64-v8a-release.apk"
+          sha256sum SukiSU_Nova.apk
+          echo "1202adb835a64d8b3df703da7884a2966f8728c131cffb29fb5f48d31d81ac85  SukiSU_Nova.apk" | sha256sum -c -
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SukiSU_Nova_v3.0.0_35000
+          path: SukiSU_Nova.apk
+          retention-days: 7
