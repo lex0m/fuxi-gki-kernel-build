@@ -33,7 +33,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    timeout-minutes: 300
     steps:
       - name: Checkout build-kit
         uses: actions/checkout@v4
@@ -48,11 +48,11 @@ jobs:
           sudo apt-get clean
           df -h /
 
-      - name: 增加 swap（LTO 链接吃内存；8GB，独立文件名避免与 runner 自带 /swapfile 冲突）
+      - name: 增加 swap（Full-LTO 链接非常吃内存；16GB，独立文件名避免与 runner 自带 /swapfile 冲突）
         run: |
           set -x
           sudo rm -f /dsh-swapfile 2>/dev/null || true
-          sudo fallocate -l 8G /dsh-swapfile || sudo dd if=/dev/zero of=/dsh-swapfile bs=1M count=8192
+          sudo fallocate -l 16G /dsh-swapfile || sudo dd if=/dev/zero of=/dsh-swapfile bs=1M count=16384
           sudo chmod 600 /dsh-swapfile
           sudo mkswap /dsh-swapfile
           sudo swapon /dsh-swapfile || true
@@ -75,8 +75,11 @@ jobs:
         run: |
           set -o pipefail
           echo "[$(date +%T)] build step start"
-          timeout --signal=INT 3300 bash scripts/build.sh 2>&1 | tee build-run.log
-          echo "[$(date +%T)] build step end rc=$?"
+          timeout --signal=INT 10800 bash scripts/build.sh 2>&1 | tee build-run.log
+          rc=$?
+          echo "[$(date +%T)] build step end rc=$rc"
+          free -h || true
+          exit $rc
 
       - name: 显示产物
         if: always()
