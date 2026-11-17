@@ -68,8 +68,35 @@ if [ "$SKIP_SYNC" != "1" ]; then
                        die "找不到 android13-5.15 的 2024-11 manifest ref，请手动传 MANIFEST_REF=..."; }
     log "使用 manifest ref: $REF"
     ( cd "$WORK"
-      repo init -u "$KERNEL_MANIFEST" -b "$REF" --no-repo-verify
-      repo sync -c -j"$(nproc)" --no-clone-bundle --retry-fetches=3 )
+      repo init -u "$KERNEL_MANIFEST" -b "$REF" --no-repo-verify )
+
+    repo_sync_once() {
+      ( cd "$WORK"
+        repo sync -c -j"$(nproc)" --no-clone-bundle --retry-fetches=3 )
+    }
+    if ! repo_sync_once; then
+      log "首次 repo sync 失败，探测可用 refs 并尝试回退（deprecated 分支 / tag / 移动分支）"
+      COMMON_URL="https://android.googlesource.com/kernel/common"
+      git ls-remote "$COMMON_URL" > "$WORK/refs-common.txt" 2>/dev/null || true
+      log "kernel/common 里含 2024-11 的 refs（前 40 行）:"
+      grep -E '2024-11' "$WORK/refs-common.txt" | head -n 40 || true
+      MANI="$WORK/.repo/manifests"
+      DEP="deprecated/android13-5.15-2024-11"
+      if grep -q "refs/heads/$DEP" "$WORK/refs-common.txt"; then
+        log "回退方案 1：manifest 里把 android13-5.15-2024-11 改成 $DEP"
+        find "$MANI" -name '*.xml' -exec sed -i "s#android13-5\.15-2024-11#$DEP#g" {} +
+      else
+        TAG="$(grep -oE 'refs/tags/android13-5\.15-2024-11[^[:space:]]*' "$WORK/refs-common.txt" | head -n1 | sed 's#^refs/tags/##' || true)"
+        if [ -n "$TAG" ]; then
+          log "回退方案 2：manifest 里把 revision 改成 tag: $TAG"
+          find "$MANI" -name '*.xml' -exec sed -i "s#revision=\"android13-5\.15-2024-11\"#revision=\"$TAG\"#g" {} +
+        else
+          log "回退方案 3：退回 manifest 分支 common-android13-5.15（移动 LTS 分支），随后仍 checkout 固定 commit"
+          ( cd "$WORK"; repo init -u "$KERNEL_MANIFEST" -b common-android13-5.15 --no-repo-verify )
+        fi
+      fi
+      repo_sync_once || die "repo sync 仍然失败（已尝试 deprecated/tag/移动分支回退）"
+    fi
   else
     log "复用已有 repo：$WORK"
   fi
